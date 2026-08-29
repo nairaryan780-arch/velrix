@@ -1,0 +1,385 @@
+// Velrix schema — portable across SQLite (dev) and PostgreSQL (production).
+// Domain enums are stored as String columns backed by src/lib/constants.ts and
+// validated with zod at the API boundary, so the same schema runs on both
+// engines. To use PostgreSQL, set provider = "postgresql" and point
+// DATABASE_URL at your Postgres instance (see docker-compose.yml / .env.example).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                    String    @id @default(cuid())
+  email                 String    @unique
+  name                  String
+  passwordHash          String
+  emailVerifiedAt       DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  memberships           Membership[]
+  sessions              Session[]
+  assignedLeads         Lead[]                   @relation("LeadAssignee")
+  assignedConversations Conversation[]           @relation("ConversationAssignee")
+  auditLogs             AuditLog[]
+  passwordResets        PasswordResetToken[]
+  emailTokens           EmailVerificationToken[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  ip        String?
+  userAgent String?
+
+  @@index([userId])
+}
+
+model EmailVerificationToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model Organization {
+  id                 String   @id @default(cuid())
+  name               String
+  slug               String   @unique
+  industry           String   @default("real_estate")
+  website            String?
+  whatWeSell         String?
+  timezone           String   @default("Asia/Kolkata")
+  onboardingStep     Int      @default(1)
+  onboardingComplete Boolean  @default(false)
+  agentActive        Boolean  @default(false)
+  isDemo             Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  memberships        Membership[]
+  agents             Agent[]
+  leads              Lead[]
+  conversations      Conversation[]
+  knowledgeSources   KnowledgeSource[]
+  qualificationRules QualificationRule[]
+  followUpSequences  FollowUpSequence[]
+  channels           Channel[]
+  integrations       Integration[]
+  notifications      Notification[]
+  subscription       Subscription?
+  usageRecords       UsageRecord[]
+  auditLogs          AuditLog[]
+  analyticsDaily     AnalyticsDaily[]
+}
+
+model Membership {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           String       @default("OWNER")
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+model Agent {
+  id                  String       @id @default(cuid())
+  organizationId      String
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name                String       @default("Velrix")
+  tone                String       @default("professional")
+  businessDescription String       @default("")
+  instructions        String       @default("")
+  policies            String       @default("")
+  businessHoursJson   Json?
+  scoringJson         Json
+  handoffJson         Json
+  widgetJson          Json
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  @@index([organizationId])
+}
+
+model QualificationRule {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  key            String
+  prompt         String
+  required       Boolean      @default(true)
+  weight         Int          @default(15)
+  sortOrder      Int          @default(0)
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+}
+
+model FollowUpSequence {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String        @default("Default inactivity follow-up")
+  active         Boolean       @default(true)
+  maxAttempts    Int           @default(2)
+  stepsJson      Json
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  jobs           FollowUpJob[]
+
+  @@index([organizationId])
+}
+
+model FollowUpJob {
+  id             String           @id @default(cuid())
+  sequenceId     String
+  sequence       FollowUpSequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  conversationId String
+  conversation   Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  attempt        Int
+  runAt          DateTime
+  status         String           @default("scheduled")
+  createdAt      DateTime         @default(now())
+  sentAt         DateTime?
+
+  @@index([runAt, status])
+  @@index([conversationId])
+}
+
+model Channel {
+  id             String         @id @default(cuid())
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  type           String
+  name           String
+  status         String         @default("DISCONNECTED")
+  publicKey      String         @unique
+  configJson     Json?
+  errorMessage   String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  conversations  Conversation[]
+
+  @@unique([organizationId, type])
+  @@index([organizationId])
+}
+
+model Integration {
+  id                   String       @id @default(cuid())
+  organizationId       String
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  provider             String
+  encryptedCredentials String
+  status               String       @default("disconnected")
+  lastError            String?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  @@unique([organizationId, provider])
+}
+
+model KnowledgeSource {
+  id             String           @id @default(cuid())
+  organizationId String
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  type           String
+  title          String
+  content        String           @default("")
+  url            String?
+  filePath       String?
+  approved       Boolean          @default(true)
+  status         String           @default("PENDING")
+  errorMessage   String?
+  lastIndexedAt  DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  chunks         KnowledgeChunk[]
+
+  @@index([organizationId])
+}
+
+model KnowledgeChunk {
+  id         String          @id @default(cuid())
+  sourceId   String
+  source     KnowledgeSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  content    String
+  embedding  Json?
+  tokenCount Int             @default(0)
+  createdAt  DateTime        @default(now())
+
+  @@index([sourceId])
+}
+
+model Lead {
+  id               String         @id @default(cuid())
+  organizationId   String
+  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name             String?
+  email            String?
+  phone            String?
+  source           String         @default("WEBSITE")
+  intent           String?
+  budget           String?
+  timeline         String?
+  location         String?
+  interest         String?
+  requirementsJson Json?
+  score            Int            @default(0)
+  temperature      String         @default("COLD")
+  scoreReasonsJson Json?
+  status           String         @default("NEW")
+  qualified        Boolean        @default(false)
+  lastContactAt    DateTime?
+  assignedToId     String?
+  assignedTo       User?          @relation("LeadAssignee", fields: [assignedToId], references: [id])
+  tags             Json?
+  outcomeNote      String?
+  isDemo           Boolean        @default(false)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  conversations    Conversation[]
+
+  @@index([organizationId, temperature])
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
+}
+
+model Conversation {
+  id               String        @id @default(cuid())
+  organizationId   String
+  organization     Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  leadId           String
+  lead             Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  channelId        String?
+  channel          Channel?      @relation(fields: [channelId], references: [id])
+  channelType      String        @default("WEBSITE")
+  externalThreadId String?
+  status           String        @default("AI_ACTIVE")
+  stateJson        Json?
+  summary          String?
+  optOut           Boolean       @default(false)
+  assignedToId     String?
+  assignedTo       User?         @relation("ConversationAssignee", fields: [assignedToId], references: [id])
+  isDemo           Boolean       @default(false)
+  lastMessageAt    DateTime      @default(now())
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  messages         Message[]
+  followUpJobs     FollowUpJob[]
+
+  @@unique([organizationId, channelType, externalThreadId])
+  @@index([organizationId, status])
+  @@index([organizationId, lastMessageAt])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  organizationId String
+  author         String
+  body           String
+  metaJson       Json?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([organizationId])
+}
+
+model Notification {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  kind           String
+  title          String
+  body           String
+  dataJson       Json?
+  readAt         DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, createdAt])
+}
+
+model Subscription {
+  id                     String       @id @default(cuid())
+  organizationId         String       @unique
+  organization           Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan                   String       @default("STARTER")
+  status                 String       @default("TRIALING")
+  razorpayCustomerId     String?
+  razorpaySubscriptionId String?
+  currentPeriodEnd       DateTime?
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+}
+
+model UsageRecord {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  metric         String
+  quantity       Int          @default(1)
+  period         String
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, metric, period])
+}
+
+model AuditLog {
+  id             String        @id @default(cuid())
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  userId         String?
+  user           User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action         String
+  entity         String?
+  entityId       String?
+  requestId      String?
+  metaJson       Json?
+  createdAt      DateTime      @default(now())
+
+  @@index([organizationId, createdAt])
+}
+
+model AnalyticsDaily {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  day            DateTime
+  enquiries      Int          @default(0)
+  qualified      Int          @default(0)
+  hot            Int          @default(0)
+  warm           Int          @default(0)
+  cold           Int          @default(0)
+  handoffs       Int          @default(0)
+  followUps      Int          @default(0)
+  won            Int          @default(0)
+  lost           Int          @default(0)
+  responseMsSum  Int          @default(0)
+  responseCount  Int          @default(0)
+
+  @@unique([organizationId, day])
+}
